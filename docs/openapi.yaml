@@ -2,10 +2,6 @@ openapi: 3.0.3
 info:
   title: GoRestTeach API
   description: |
-    A teaching REST API built with **Go + Gin + GORM + PostgreSQL**.
-
-    Designed to help Flutter teams learn how to work with REST endpoints and Postman.
-
     ## Authentication
 
     The API uses **JWT Bearer** authentication:
@@ -56,6 +52,8 @@ info:
     name: AcidSoft
 
 servers:
+  - url: https://goflutterrest.onrender.com/api/v1
+    description: Production server (Render)
   - url: http://localhost:8080/api/v1
     description: Local development server
 
@@ -272,7 +270,7 @@ paths:
       description: Simple liveness probe. No authentication required.
       operationId: healthCheck
       servers:
-        - url: http://localhost:8080
+        - url: https://goflutterrest.onrender.com
       responses:
         '200':
           description: Server is running
