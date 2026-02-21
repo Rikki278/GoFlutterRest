@@ -1,0 +1,988 @@
+openapi: 3.0.3
+info:
+  title: GoRestTeach API
+  description: |
+    A teaching REST API built with **Go + Gin + GORM + PostgreSQL**.
+
+    Designed to help Flutter teams learn how to work with REST endpoints and Postman.
+
+    ## Authentication
+
+    The API uses **JWT Bearer** authentication:
+    1. Register via `POST /auth/register`
+    2. Obtain tokens via `POST /auth/login`
+    3. Add the header: `Authorization: Bearer <access_token>`
+    4. The access token expires in **15 minutes**. Refresh it via `POST /auth/refresh`
+
+    ## Response Format
+
+    **Success:**
+    ```json
+    {
+      "success": true,
+      "data": { ... },
+      "meta": { "page": 1, "per_page": 10, "total": 42 }
+    }
+    ```
+
+    **Error:**
+    ```json
+    {
+      "success": false,
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Validation failed",
+        "details": [{ "field": "email", "message": "Must be a valid email address" }]
+      }
+    }
+    ```
+
+    ## Error Codes
+
+    | HTTP | Code | When |
+    |------|------|------|
+    | 400 | `VALIDATION_ERROR` | Invalid request body fields |
+    | 400 | `BAD_REQUEST` | Malformed JSON or missing body |
+    | 401 | `UNAUTHORIZED` | Missing or invalid token |
+    | 401 | `TOKEN_EXPIRED` | JWT access token has expired |
+    | 403 | `FORBIDDEN` | Action not allowed (e.g. editing another user's post) |
+    | 404 | `NOT_FOUND` | Resource does not exist |
+    | 409 | `CONFLICT` | Email already registered |
+    | 413 | `FILE_TOO_LARGE` | Uploaded file exceeds 5MB |
+    | 415 | `UNSUPPORTED_MEDIA_TYPE` | File is not a supported image format |
+    | 500 | `INTERNAL_ERROR` | Unexpected server error |
+  version: 1.0.0
+  contact:
+    name: AcidSoft
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development server
+
+tags:
+  - name: auth
+    description: Registration, login, token refresh, and logout
+  - name: users
+    description: User profile management and avatar upload
+  - name: posts
+    description: Create, read, update, and delete posts
+  - name: images
+    description: Retrieve images stored in the database
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Paste the `access_token` received from `/auth/login`.
+        Format: `Bearer <token>`
+
+  schemas:
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+              enum:
+                - VALIDATION_ERROR
+                - BAD_REQUEST
+                - UNAUTHORIZED
+                - TOKEN_EXPIRED
+                - FORBIDDEN
+                - NOT_FOUND
+                - CONFLICT
+                - FILE_TOO_LARGE
+                - UNSUPPORTED_MEDIA_TYPE
+                - INTERNAL_ERROR
+            message:
+              type: string
+              example: Validation failed
+            details:
+              type: array
+              nullable: true
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+
+    UserPublic:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+        name:
+          type: string
+          example: John Doe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        bio:
+          type: string
+          example: Flutter developer at AcidSoft
+        avatar_id:
+          type: string
+          format: uuid
+          nullable: true
+          example: 660e8400-e29b-41d4-a716-446655440001
+          description: Use `GET /images/{avatar_id}` to fetch the image bytes
+        created_at:
+          type: string
+          format: date-time
+
+    TokenPair:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: Short-lived JWT (15 minutes). Use in the Authorization header.
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          description: Long-lived opaque UUID token (7 days). Store it securely.
+          example: a3f4c2d1-1234-5678-abcd-ef0123456789
+        token_type:
+          type: string
+          example: Bearer
+
+    Post:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: My first post
+        body:
+          type: string
+          example: This is the content of my first post.
+        image_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: Use `GET /images/{image_id}` to fetch the image bytes
+        author:
+          $ref: '#/components/schemas/UserPublic'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        per_page:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          example: 42
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid JWT token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: Authorization header is required
+
+    Forbidden:
+      description: User does not have permission to perform this action
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: You do not have permission to perform this action
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: Post not found
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Validation failed
+              details:
+                - field: email
+                  message: Must be a valid email address
+                - field: password
+                  message: Must be at least 8 characters long
+
+paths:
+  /health:
+    get:
+      tags: [auth]
+      summary: Health check
+      description: Simple liveness probe. No authentication required.
+      operationId: healthCheck
+      servers:
+        - url: http://localhost:8080
+      responses:
+        '200':
+          description: Server is running
+          content:
+            application/json:
+              example:
+                success: true
+                data:
+                  status: ok
+                  version: 1.0.0
+                  service: gorestteach
+
+  # ── AUTH ───────────────────────────────────────────────────────────────────
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register
+      description: |
+        Creates a new user account.
+
+        **Team task (beginner):** Register a new user and verify that trying to
+        register with the same email a second time returns `409 CONFLICT`.
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                  example: John Doe
+                email:
+                  type: string
+                  format: email
+                  example: john@example.com
+                password:
+                  type: string
+                  minLength: 8
+                  example: secret123
+      responses:
+        '201':
+          description: User successfully created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserPublic'
+              example:
+                success: true
+                data:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  name: John Doe
+                  email: john@example.com
+                  bio: ""
+                  avatar_id: null
+                  created_at: "2026-02-21T13:00:00Z"
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              example:
+                success: false
+                error:
+                  code: CONFLICT
+                  message: Email is already registered
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      description: |
+        Authenticates the user and returns an **access token** (JWT, 15 min)
+        and a **refresh token** (UUID, 7 days).
+
+        **Team task (beginner):** Log in and save both tokens. Use the
+        `access_token` in the `Authorization` header for protected endpoints.
+        Paste the token at [jwt.io](https://jwt.io) to inspect the claims.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: john@example.com
+                password:
+                  type: string
+                  example: secret123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TokenPair'
+              example:
+                success: true
+                data:
+                  access_token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.abc123
+                  refresh_token: a3f4c2d1-1234-5678-abcd-ef0123456789
+                  token_type: Bearer
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              example:
+                success: false
+                error:
+                  code: UNAUTHORIZED
+                  message: Invalid email or password
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      description: |
+        Exchanges the refresh token for a **new access + refresh token pair**
+        (rotation pattern). The old refresh token is deleted after a successful
+        exchange — do not reuse it.
+
+        **Team task (intermediate):** Wait for the access token to expire
+        (or temporarily lower `JWT_ACCESS_EXPIRES_MINUTES` in `.env`), then
+        call this endpoint to get a fresh token pair without logging in again.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: a3f4c2d1-1234-5678-abcd-ef0123456789
+      responses:
+        '200':
+          description: New token pair issued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/TokenPair'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout
+      description: |
+        Invalidates the given refresh token by deleting it from the database.
+
+        > **Note:** The access token **cannot be revoked** — it remains valid
+        > until it expires (15 min). This is by design in stateless JWT
+        > architectures. Keep the expiry short in production.
+
+        **Team task (intermediate):** Log out, then try to use the old
+        `refresh_token` again — you should receive `401 UNAUTHORIZED`.
+      operationId: logout
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+                  example: a3f4c2d1-1234-5678-abcd-ef0123456789
+      responses:
+        '204':
+          description: Logged out successfully (no body)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ── USERS ──────────────────────────────────────────────────────────────────
+  /users/me:
+    get:
+      tags: [users]
+      summary: Get my profile
+      description: |
+        Returns the authenticated user's profile.
+
+        The user identity is extracted **directly from the JWT token** — no
+        need to send a user ID in the request.
+
+        **Team task (beginner):** Add the Bearer token and view your profile.
+        Decode the JWT at [jwt.io](https://jwt.io) and locate `user_id` and
+        `email` in the payload.
+      operationId: getMyProfile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserPublic'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    put:
+      tags: [users]
+      summary: Update my profile
+      description: Updates the authenticated user's `name` and/or `bio`.
+      operationId: updateMyProfile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                  example: Jane Doe
+                bio:
+                  type: string
+                  maxLength: 500
+                  example: I build Flutter apps
+      responses:
+        '200':
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserPublic'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/me/avatar:
+    post:
+      tags: [users]
+      summary: Upload avatar
+      description: |
+        Uploads an avatar image. The file is stored as a **bytea blob** in
+        PostgreSQL — no file system needed.
+
+        After a successful upload, `avatar_id` appears in your profile.
+        Use `GET /images/{avatar_id}` to display the image.
+
+        **Team task (intermediate):** In Postman choose
+        `Body → form-data`, add a key named `avatar` with type **File**,
+        and select a JPEG/PNG image. After upload, open
+        `GET /images/{avatar_id}` in your browser — the image should render.
+
+        **Allowed types:** JPEG, PNG, WebP, GIF
+        **Max size:** 5 MB
+      operationId: uploadAvatar
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+                  description: Image file (JPEG, PNG, WebP, or GIF — max 5 MB)
+      responses:
+        '200':
+          description: Avatar uploaded; updated profile returned
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserPublic'
+        '400':
+          description: Field `avatar` is missing
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          description: File exceeds the 5 MB limit
+          content:
+            application/json:
+              example:
+                success: false
+                error:
+                  code: FILE_TOO_LARGE
+                  message: File exceeds maximum allowed size of 5MB
+        '415':
+          description: Unsupported file type
+          content:
+            application/json:
+              example:
+                success: false
+                error:
+                  code: UNSUPPORTED_MEDIA_TYPE
+                  message: Only JPEG, PNG, WebP and GIF images are allowed
+
+  /users/{id}:
+    get:
+      tags: [users]
+      summary: Get user by ID
+      description: Returns the public profile of any user identified by their UUID.
+      operationId: getUserById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserPublic'
+        '400':
+          description: Invalid UUID format
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── POSTS ──────────────────────────────────────────────────────────────────
+  /posts:
+    post:
+      tags: [posts]
+      summary: Create post
+      description: |
+        Creates a new post. The author is determined by the JWT token —
+        you do **not** need to send a `user_id` field.
+
+        **Team task (intermediate):** Create a post, then retrieve the full
+        list and find your post by ID.
+      operationId: createPost
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              properties:
+                title:
+                  type: string
+                  minLength: 3
+                  maxLength: 255
+                  example: My Flutter experience
+                body:
+                  type: string
+                  minLength: 10
+                  example: Flutter is amazing for cross-platform development because...
+      responses:
+        '201':
+          description: Post created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    get:
+      tags: [posts]
+      summary: List posts
+      description: |
+        Returns a paginated list of posts with author information.
+
+        Supports full-text case-insensitive search (`ILIKE`) on `title` and `body`.
+
+        **Team task (intermediate):** Try different combinations of `page`,
+        `per_page`, and `search`. Pay attention to the `meta` object in
+        the response — use it to build pagination UI.
+      operationId: listPosts
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          example: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+          example: 10
+        - name: search
+          in: query
+          schema:
+            type: string
+          example: flutter
+          description: Keyword matched against title and body (case-insensitive)
+      responses:
+        '200':
+          description: Paginated list of posts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Post'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /posts/{id}:
+    get:
+      tags: [posts]
+      summary: Get post by ID
+      description: Returns a single post with the full author object nested inside.
+      operationId: getPostById
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Post details
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [posts]
+      summary: Update post
+      description: |
+        Updates a post's `title` and/or `body`.
+        **Only the post owner** can update it — other users receive `403 FORBIDDEN`.
+
+        **Team task (advanced):** Create two separate user accounts. Log in as
+        user A and create a post. Then switch to user B's token and try to
+        update that post — you should receive `403 FORBIDDEN`.
+      operationId: updatePost
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 3
+                  maxLength: 255
+                  example: Updated title
+                body:
+                  type: string
+                  minLength: 10
+                  example: Updated body content...
+      responses:
+        '200':
+          description: Updated post
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [posts]
+      summary: Delete post
+      description: |
+        Permanently deletes a post.
+        **Only the post owner** can delete it.
+      operationId: deletePost
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Deleted successfully (no body)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /posts/{id}/image:
+    post:
+      tags: [posts]
+      summary: Attach image to post
+      description: |
+        Uploads an image file and links it to the specified post.
+        Only the post owner can attach images.
+
+        After upload, `image_id` appears in the post object.
+        Use `GET /images/{image_id}` to fetch and display the image.
+
+        **Team task (advanced):** Attach an image to your post, then try
+        uploading a `.txt` file instead — you should receive `415 UNSUPPORTED_MEDIA_TYPE`.
+        Also verify that a different user cannot attach an image to someone
+        else's post (`403 FORBIDDEN`).
+
+        **Allowed types:** JPEG, PNG, WebP, GIF
+        **Max size:** 5 MB
+      operationId: attachPostImage
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Post UUID
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Image file (JPEG, PNG, WebP, or GIF — max 5 MB)
+      responses:
+        '200':
+          description: Post updated with the attached image
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '400':
+          description: Field `image` is missing
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: File exceeds the 5 MB limit
+        '415':
+          description: Unsupported file type
+
+  # ── IMAGES ────────────────────────────────────────────────────────────────
+  /images/{id}:
+    get:
+      tags: [images]
+      summary: Get image
+      description: |
+        Returns raw image bytes with the appropriate `Content-Type` header
+        (`image/jpeg`, `image/png`, etc.).
+
+        This endpoint is **public** — no authentication required.
+        Use the UUID from `avatar_id` (user profile) or `image_id` (post).
+
+        **In Flutter:**
+        ```dart
+        Image.network('http://localhost:8080/api/v1/images/$imageId')
+        ```
+
+        **In browser:** paste the full URL — the image renders directly.
+      operationId: getImage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          example: 660e8400-e29b-41d4-a716-446655440001
+      responses:
+        '200':
+          description: Raw image binary data
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
