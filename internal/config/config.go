@@ -31,9 +31,9 @@ type DatabaseConfig struct {
 }
 
 type JWTConfig struct {
-	AccessSecret          string
-	RefreshSecret         string
-	AccessExpiresDuration time.Duration
+	AccessSecret           string
+	RefreshSecret          string
+	AccessExpiresDuration  time.Duration
 	RefreshExpiresDuration time.Duration
 }
 
@@ -52,8 +52,12 @@ func Load() (*Config, error) {
 	_ = viper.ReadInConfig()
 
 	// Set defaults
+	// Render.com injects PORT; fall back to SERVER_PORT for local dev
 	viper.SetDefault("SERVER_PORT", 8080)
 	viper.SetDefault("SERVER_MODE", "debug")
+	if port := viper.GetInt("PORT"); port != 0 && !viper.IsSet("SERVER_PORT") {
+		viper.Set("SERVER_PORT", port)
+	}
 	viper.SetDefault("DB_SSLMODE", "disable")
 	viper.SetDefault("JWT_ACCESS_EXPIRES_MINUTES", 15)
 	viper.SetDefault("JWT_REFRESH_EXPIRES_DAYS", 7)
